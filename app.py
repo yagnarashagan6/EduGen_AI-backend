@@ -1,0 +1,375 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+import requests
+import os
+import json
+from datetime import datetime
+import speech_recognition as sr
+import pyttsx3
+import io
+import base64
+from pydub import AudioSegment
+import tempfile
+import uuid
+from werkzeug.utils import secure_filename
+import google.generativeai as genai
+import time
+import random
+
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
+app = Flask(__name__)
+
+# Configure Google Gemini API
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+if not GOOGLE_API_KEY:
+    print("Error: GOOGLE_API_KEY environment variable not set.")
+    exit(1)
+
+genai.configure(api_key=GOOGLE_API_KEY)
+
+try:
+    # Using Gemini Flash model for fast responses
+    model = genai.GenerativeModel('gemini-2.5-flash')
+except Exception as e:
+    print(f"Error initializing Gemini model: {e}")
+    exit(1)
+
+# CORS configuration
+allowed_origins = [
+    "https://edugen-ai-zeta.vercel.app",
+    "http://localhost:3000",
+    "https://edugen-backend.onrender.com",
+]
+
+CORS(app, origins=allowed_origins, methods=["GET", "POST", "OPTIONS"], 
+     allow_headers=["Content-Type", "Authorization"])
+
+# Rate limiting configuration
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    default_limits=["200 per day", "50 per hour"]
+)
+
+# Initialize speech engine
+tts_engine = pyttsx3.init()
+speech_recognizer = sr.Recognizer()
+
+def get_gemini_response(prompt):
+    """Fetches response from Gemini API with exponential backoff."""
+    max_retries = 3
+    base_delay = 1
+    for attempt in range(max_retries):
+        try:
+            response = model.generate_content(prompt)
+            return response.text
+        except Exception as e:
+            if "429" in str(e) and attempt < max_retries - 1:
+                delay = (base_delay * 2 ** attempt) + random.uniform(0, 1)
+                print(f"Rate limit exceeded. Retrying in {delay:.2f}s...")
+                time.sleep(delay)
+            else:
+                print(f"Gemini API error: {e}")
+                return "Sorry, I'm having trouble processing your request right now. Please try again."
+    return "The service is currently busy. Please try again in a moment."
+
+# Rate limit for chat and quiz endpoints
+@limiter.limit("2 per 15 seconds")
+@app.route("/api/health", methods=["GET"])
+def health_check():
+    """Health check endpoint"""
+    return jsonify({
+        "status": "ok",
+        "version": "1.0.2",
+        "timestamp": datetime.now().isoformat(),
+        "model": "gemini-1.5-flash",
+        "talk_mode": "enabled"
+    })
+
+@limiter.limit("2 per 15 seconds")
+@app.route("/api/chat", methods=["POST"])
+def chat():
+    """Chat endpoint"""
+    try:
+        data = request.get_json()
+        message = data.get("message")
+        
+        if not message:
+            return jsonify({"error": "Message is required"}), 400
+
+        print("=== CHAT REQUEST START ===")
+        print("Using model: gemini-1.5-flash")
+        print("Message received:", message)
+
+        # Special handling for time/date requests
+        if "time" in message.lower() or "date" in message.lower():
+            now = datetime.now()
+            response_text = f"The current date and time is {now.strftime('%A, %B %d, %Y, %I:%M %p')}."
+            return jsonify({"response": response_text})
+
+        # Create prompt for Gemini
+        prompt = f"""You are EduGen AI 🎓, a comprehensive educational assistant for students. When explaining topics, follow these guidelines:
+
+📚 CONTENT DEPTH: Provide detailed, thorough explanations that cover:
+• Key concepts and definitions
+• Step-by-step breakdowns when applicable
+• Multiple perspectives or approaches
+• Important connections to related topics
+
+🌍 REAL-WORLD EXAMPLES: Always include:
+• Practical, everyday examples students can relate to
+• Current events or modern applications
+• Industry use cases and career connections
+• Historical context when relevant
+
+💡 CLARITY & UNDERSTANDING: Make content accessible by:
+• Using simple language with clear explanations
+• Breaking complex ideas into digestible parts
+• Providing analogies and metaphors
+• Including visual descriptions where helpful
+
+📺 EDUCATIONAL RESOURCES: When appropriate, suggest:
+• YouTube channels and specific video recommendations for visual learning
+• Educational articles and research papers for deeper reading
+• Interactive websites and tools for hands-on practice
+• Free online courses (Khan Academy, Coursera, edX) for structured learning
+• Documentaries and educational content for broader understanding
+
+🔗 RESOURCE FORMAT: Present resources as:
+📺 **YouTube Videos:**
+• [Video Title] - Channel Name
+• Search terms: 'specific keywords for finding videos'
+
+📖 **Articles & Reading:**
+• Article/website suggestions with brief descriptions
+• Search terms for finding quality articles
+
+📍 STRUCTURE: Organize responses with:
+• Clear headings using emojis (🧮 math, 🧪 science, 📖 literature, etc.)
+• Bullet points and numbered lists
+• Key takeaways highlighted with ✨
+• Practical tips marked with 💡
+• Resource recommendations marked with 🔗
+
+Always aim for comprehensive yet understandable explanations that help students truly grasp the material, see its relevance in the real world, and provide pathways for further learning through quality educational resources.
+
+Student's question: {message}"""
+
+        # Get response from Gemini
+        reply = get_gemini_response(prompt)
+        
+        return jsonify({"response": reply})
+        
+    except Exception as e:
+        print(f"Chat API Error: {str(e)}")
+        return jsonify({
+            "error": "Failed to get response from AI",
+            "message": str(e)
+        }), 500
+
+@limiter.limit("2 per 15 seconds")
+@app.route("/api/generate-quiz", methods=["POST"])
+def generate_quiz():
+    """Quiz generation endpoint"""
+    try:
+        data = request.get_json()
+        topic = data.get("topic")
+        count = data.get("count")
+
+        if not topic or not isinstance(topic, str) or not topic.strip():
+            return jsonify({
+                "error": "Invalid input",
+                "message": "Please provide a valid topic for the quiz"
+            }), 400
+
+        try:
+            question_count = int(count)
+            if question_count < 3 or question_count > 10:
+                raise ValueError()
+        except (ValueError, TypeError):
+            return jsonify({
+                "error": "Invalid input",
+                "message": "Please request between 3 and 10 questions"
+            }), 400
+
+        prompt = f"""Generate exactly {question_count} multiple choice quiz questions on the topic "{topic}". Follow these strict rules:
+1. Each question must have:
+   - A clear question text
+   - Exactly 4 options (A, B, C, D)
+   - One correct answer (must match exactly one option)
+2. Format each question as JSON with:
+   - "text": The question
+   - "options": Array of 4 options (prefix with A), B), etc.)
+   - "correctAnswer": The full correct option text
+3. Return only a valid JSON array with no extra text
+
+Example:
+[
+  {{
+    "text": "What is the capital of France?",
+    "options": ["A) London", "B) Paris", "C) Berlin", "D) Madrid"],
+    "correctAnswer": "B) Paris"
+  }}
+]
+
+Now generate {question_count} questions about "{topic}":"""
+
+        print("Using quiz model: gemini-1.5-flash")
+
+        # Create quiz generation prompt for Gemini
+        gemini_prompt = f"""You are a quiz generator 📝. Generate engaging quiz questions using subject-relevant emojis in the question text (e.g., 🧮 for math, 🧪 for science, 🌍 for geography, etc.). Return only valid JSON arrays with quiz questions in the exact specified format. Do not include any additional text or explanations. Format the questions with emojis where appropriate, but ensure the options remain clearly marked with A), B), C), D).
+
+{prompt}"""
+
+        # Get response from Gemini
+        content = get_gemini_response(gemini_prompt)
+
+        if not content or "sorry" in content.lower():
+            raise Exception("Failed to get valid response from Gemini")
+
+        # Clean and parse JSON
+        content = content.replace("```json\n", "").replace("\n```", "").strip()
+        
+        try:
+            questions = json.loads(content)
+            if not isinstance(questions, list):
+                raise ValueError("Response is not a valid array")
+        except json.JSONDecodeError as e:
+            print(f"JSON parse error: {e}, Raw content: {content}")
+            raise Exception("Failed to parse quiz data")
+
+        # Validate questions
+        validated_questions = []
+        for i, q in enumerate(questions):
+            if not q.get("text") or not isinstance(q["text"], str):
+                raise Exception(f"Question {i + 1} missing text")
+            if not q.get("options") or not isinstance(q["options"], list) or len(q["options"]) != 4:
+                raise Exception(f"Question {i + 1} must have exactly 4 options")
+            if not q.get("correctAnswer") or not isinstance(q["correctAnswer"], str):
+                raise Exception(f"Question {i + 1} missing correctAnswer")
+            if q["correctAnswer"] not in q["options"]:
+                raise Exception(f"Question {i + 1} correctAnswer doesn't match any option")
+            
+            validated_questions.append({
+                "text": q["text"].strip(),
+                "options": [opt.strip() for opt in q["options"]],
+                "correctAnswer": q["correctAnswer"].strip()
+            })
+
+        if len(validated_questions) != question_count:
+            raise Exception(f"Expected {question_count} questions, got {len(validated_questions)}")
+
+        print("Successfully generated quiz:", validated_questions)
+        return jsonify({"questions": validated_questions})
+
+    except Exception as e:
+        print(f"Quiz generation error: {str(e)}")
+        return jsonify({
+            "error": "Failed to generate quiz",
+            "message": str(e)
+        }), 500
+
+@app.route("/api/speech-to-text", methods=["POST"])
+def speech_to_text():
+    """Convert speech to text for talk mode"""
+    try:
+        if 'audio' not in request.files:
+            return jsonify({"error": "No audio file provided"}), 400
+        
+        audio_file = request.files['audio']
+        if audio_file.filename == '':
+            return jsonify({"error": "No audio file selected"}), 400
+
+        # Save the uploaded file temporarily
+        filename = secure_filename(f"{uuid.uuid4().hex}.webm")
+        temp_path = os.path.join(tempfile.gettempdir(), filename)
+        audio_file.save(temp_path)
+
+        try:
+            # Convert audio to WAV format for speech recognition
+            audio = AudioSegment.from_file(temp_path)
+            wav_path = temp_path.replace('.webm', '.wav')
+            audio.export(wav_path, format="wav")
+
+            # Perform speech recognition
+            with sr.AudioFile(wav_path) as source:
+                audio_data = speech_recognizer.record(source)
+                text = speech_recognizer.recognize_google(audio_data)
+
+            # Clean up temporary files
+            os.remove(temp_path)
+            os.remove(wav_path)
+
+            return jsonify({"text": text})
+
+        except sr.UnknownValueError:
+            return jsonify({"error": "Could not understand audio"}), 400
+        except sr.RequestError as e:
+            return jsonify({"error": f"Speech recognition error: {str(e)}"}), 500
+        finally:
+            # Ensure cleanup
+            for path in [temp_path, wav_path]:
+                if os.path.exists(path):
+                    os.remove(path)
+
+    except Exception as e:
+        print(f"Speech-to-text error: {str(e)}")
+        return jsonify({"error": f"Speech recognition failed: {str(e)}"}), 500
+
+@app.route("/api/text-to-speech", methods=["POST"])
+def text_to_speech():
+    """Convert text to speech for talk mode"""
+    try:
+        data = request.get_json()
+        text = data.get("text")
+        
+        if not text:
+            return jsonify({"error": "Text is required"}), 400
+
+        # Generate unique filename
+        filename = f"{uuid.uuid4().hex}.mp3"
+        temp_path = os.path.join(tempfile.gettempdir(), filename)
+
+        # Configure TTS engine
+        tts_engine.setProperty('rate', 150)  # Speed of speech
+        tts_engine.setProperty('volume', 0.9)  # Volume level (0.0 to 1.0)
+        
+        # Save speech to file
+        tts_engine.save_to_file(text, temp_path)
+        tts_engine.runAndWait()
+
+        # Read the audio file and encode as base64
+        with open(temp_path, 'rb') as audio_file:
+            audio_data = audio_file.read()
+            audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+
+        # Clean up temporary file
+        os.remove(temp_path)
+
+        return jsonify({
+            "audio": audio_base64,
+            "format": "mp3"
+        })
+
+    except Exception as e:
+        print(f"Text-to-speech error: {str(e)}")
+        return jsonify({"error": f"Text-to-speech failed: {str(e)}"}), 500
+
+@app.errorhandler(404)
+def not_found(e):
+    """404 handler"""
+    return jsonify({"error": "Not Found"}), 404
+
+@app.errorhandler(429)
+def rate_limit_handler(e):
+    """Rate limit handler"""
+    return jsonify({"error": "Too many requests, please wait and try again."}), 429
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port, debug=False)
