@@ -49,34 +49,35 @@ if not GOOGLE_API_KEY:
 genai.configure(api_key=GOOGLE_API_KEY)
 
 try:
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash') # Using 1.5-flash for potential improvements
 except Exception as e:
     print(f"Error initializing Gemini model: {e}")
     exit(1)
 
 # --- PROMPTS ---
 
-# --- MODIFIED PROMPT ---
-# This new prompt encourages more detailed answers and allows for helpful links.
+# --- CORRECTED PROMPT ---
+# This prompt now strictly enforces Markdown for links.
 GENERAL_CHAT_PROMPT = """
 You are a helpful and knowledgeable AI assistant named EduGen.
 Your goal is to provide concise but informative answers, typically 2-4 sentences long.
 Use markdown formatting like bolding to emphasize key points for better readability.
-If the user's question can be better answered with a link to an online resource (like a YouTube video, a Wikipedia article, or a blog post), please provide one.
-If the user explicitly asks for a link to a specific website, provide ONLY the URL and nothing else.
+When providing links to online resources, you MUST use Markdown format, like this: [Link Text](URL).
+For example: [Learn about Python on GeeksforGeeks](https://www.geeksforgeeks.org/python-programming-language/). This is not optional.
+If the user explicitly asks for a link to a specific website (e.g., "give me the link for youtube"), provide ONLY the URL and nothing else.
 Your tone should be helpful and encouraging.
 """
 
 RESUME_ANALYSIS_PROMPT = """
 You are an expert HR hiring manager. Analyze the following resume.
 Provide a very "short and sweet" analysis. Be direct and use concise language.
-** ATS Score & Feedback:**
+**ATS Score & Feedback:**
 Give a score out of 100 and a brief, one-sentence explanation.
-** Strengths:**
+**Strengths:**
 List 2 key strengths in a bulleted list.
-** Weaknesses:**
+**Weaknesses:**
 List 2 major weaknesses in a bulleted list.
-** Recommendations:**
+**Recommendations:**
 Provide 2 actionable recommendations in a bulleted list.
 """
 
@@ -131,7 +132,6 @@ def get_gemini_response(prompt):
             return response.text
         except Exception as e:
             import time
-            time.sleep(1)
             if "429" in str(e) and attempt < max_retries - 1:
                 delay = (base_delay * 2 ** attempt) + random.uniform(0, 1)
                 print(f"Rate limit exceeded. Retrying in {delay:.2f}s...")
@@ -143,7 +143,7 @@ def get_gemini_response(prompt):
 
 @app.route("/api/health", methods=["GET"])
 def health_check():
-    return jsonify({"status": "ok", "version": "1.0.8", "timestamp": datetime.now().isoformat()})
+    return jsonify({"status": "ok", "version": "1.0.9", "timestamp": datetime.now().isoformat()})
 
 @limiter.limit("5 per 15 seconds")
 @app.route("/api/chat", methods=["POST"])
