@@ -56,13 +56,14 @@ except Exception as e:
 
 # --- PROMPTS ---
 
-# CORRECTED: Made the prompt even stricter to ensure very short, casual replies.
-TALK_MODE_PROMPT = """
-You are a chatbot that gives extremely brief, casual, and direct answers.
-**Your response MUST be 1 sentence, and a maximum of 2 sentences if absolutely necessary.**
-NEVER use formatting like bolding, lists, or emojis.
-NEVER explain concepts or provide extra details. Just give the answer.
-For example, if asked for a joke, just tell the joke without explanation.
+# --- MODIFIED PROMPT ---
+# This new prompt encourages more detailed answers and allows for helpful links.
+GENERAL_CHAT_PROMPT = """
+You are a helpful and knowledgeable AI assistant named EduGen.
+Your goal is to provide concise but informative answers, typically 2-4 sentences long.
+Use markdown formatting like bolding to emphasize key points for better readability.
+If the user's question can be better answered with a link to an online resource (like a YouTube video, a Wikipedia article, or a blog post), please provide one.
+Your tone should be helpful and encouraging.
 """
 
 RESUME_ANALYSIS_PROMPT = """
@@ -144,47 +145,35 @@ def chat():
         message = data.get("message", "")
         file_data = data.get("fileData")
         filename = data.get("filename")
-        # --- CORRECTED CODE ---
-        # Get the timezone from the frontend request.
-        # The frontend should determine the user's timezone (e.g., using JavaScript)
-        # and send it in the request body, e.g., {"timezone": "Asia/Kolkata"}
         timezone = data.get("timezone") 
 
         if not message and not (file_data and filename):
             return jsonify({"error": "No message or file provided."}), 400
 
-        # --- CORRECTED CODE: Fetches time based on the user's provided timezone ---
         if "time" in message.lower() or "date" in message.lower():
             if not timezone:
-                # If the frontend doesn't send a timezone, we can't know the user's local time.
                 return jsonify({"response": "To get your local time, I need your timezone. For example, you can ask me 'what is the time in London?' or 'what is the date in Asia/Kolkata?'"}), 200
             
             try:
-                # Use the provided timezone for an accurate local time from the API.
                 api_url = f"http://worldtimeapi.org/api/timezone/{timezone}"
                 response = requests.get(api_url, timeout=5)
-                # This will raise an error for bad status codes (like 404 for an invalid timezone)
                 response.raise_for_status() 
                 
                 time_data = response.json()
                 iso_datetime_str = time_data['datetime']
                 now = datetime.fromisoformat(iso_datetime_str)
-                # Format the timezone name for better readability in the response.
                 formatted_timezone = timezone.replace('_', ' ').split('/')[-1]
                 response_text = f"The current date and time in {formatted_timezone} is {now.strftime('%A, %B %d, %Y, %I:%M %p')}."
                 return jsonify({"response": response_text})
 
             except requests.exceptions.HTTPError:
-                # This error handles cases where the timezone name is invalid.
                  return jsonify({"response": f"Sorry, I couldn't find a timezone named '{timezone}'. Please try another one, like 'America/New_York' or 'Europe/Paris'."}), 400
             except Exception as e:
                 print(f"Error fetching/processing time data: {e}")
                 return jsonify({"response": "Sorry, I had trouble getting the time for you right now."}), 500
-        # --- END OF CORRECTION ---
 
         # Handle document processing
         if file_data and filename:
-            # (This logic remains unchanged)
             extracted_text = extract_text_from_file(file_data, filename)
             if not extracted_text:
                 return jsonify({"response": "Sorry, I could not read the content of the document."})
@@ -200,10 +189,9 @@ def chat():
             reply = get_gemini_response(final_prompt)
             return jsonify({"response": reply})
 
-        # --- LOGIC SIMPLIFICATION ---
-        # REMOVED: The entire if talk_mode / else block and the long educational prompt.
-        # NEW: All general chat messages now use the single, strict TALK_MODE_PROMPT for brief, casual replies.
-        final_prompt = f"{TALK_MODE_PROMPT}\n\nUser's question: {message}"
+        # --- UPDATED LOGIC ---
+        # All general chat messages now use the new, more detailed GENERAL_CHAT_PROMPT.
+        final_prompt = f"{GENERAL_CHAT_PROMPT}\n\nUser's question: {message}"
         reply = get_gemini_response(final_prompt)
         
         return jsonify({"response": reply})
