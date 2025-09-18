@@ -7,13 +7,15 @@ import os
 import json
 import io
 import base64
+import sys
+import datetime
+import time
+import random
 from datetime import datetime
 import tempfile
 import uuid
 from werkzeug.utils import secure_filename
 import google.generativeai as genai
-import time
-import random
 
 # Optional imports for audio processing
 try:
@@ -222,7 +224,7 @@ def chat():
         if talk_mode:
             # Casual talk mode - short and sweet responses
             if "time" in message.lower() or "date" in message.lower():
-                now = datetime.now()
+                now = datetime.datetime.now()
                 response_text = f"The current date and time is {now.strftime('%A, %B %d, %Y, %I:%M %p')}."
                 return jsonify({"response": response_text})
                 
@@ -231,7 +233,7 @@ def chat():
         else:
             # Educational mode - detailed explanations
             if "time" in message.lower() or "date" in message.lower():
-                now = datetime.now()
+                now = datetime.datetime.now()
                 response_text = f"The current date and time is {now.strftime('%A, %B %d, %Y, %I:%M %p')}."
                 return jsonify({"response": response_text})
 
