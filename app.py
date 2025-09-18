@@ -6,17 +6,24 @@ import requests
 import os
 import json
 from datetime import datetime
-import speech_recognition as sr
-import pyttsx3
-import io
-import base64
-from pydub import AudioSegment
 import tempfile
 import uuid
 from werkzeug.utils import secure_filename
 import google.generativeai as genai
 import time
 import random
+
+# Optional imports for audio processing
+try:
+    import speech_recognition as sr
+    import pyttsx3
+    import io
+    import base64
+    from pydub import AudioSegment
+    AUDIO_ENABLED = True
+except ImportError:
+    AUDIO_ENABLED = False
+    print("Audio processing libraries not available. Speech features disabled.")
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -56,9 +63,17 @@ limiter = Limiter(
     default_limits=["200 per day", "50 per hour"]
 )
 
-# Initialize speech engine
-tts_engine = pyttsx3.init()
-speech_recognizer = sr.Recognizer()
+# Initialize speech engine (if available)
+if AUDIO_ENABLED:
+    try:
+        tts_engine = pyttsx3.init()
+        speech_recognizer = sr.Recognizer()
+    except Exception as e:
+        print(f"Audio initialization failed: {e}")
+        AUDIO_ENABLED = False
+else:
+    tts_engine = None
+    speech_recognizer = None
 
 def get_gemini_response(prompt):
     """Fetches response from Gemini API with exponential backoff."""
@@ -85,10 +100,11 @@ def health_check():
     """Health check endpoint"""
     return jsonify({
         "status": "ok",
-        "version": "1.0.2",
+        "version": "1.0.3",
         "timestamp": datetime.now().isoformat(),
         "model": "gemini-1.5-flash",
-        "talk_mode": "enabled"
+        "talk_mode": "enabled" if AUDIO_ENABLED else "disabled",
+        "audio_features": AUDIO_ENABLED
     })
 
 @limiter.limit("2 per 15 seconds")
@@ -277,6 +293,12 @@ Now generate {question_count} questions about "{topic}":"""
 @app.route("/api/speech-to-text", methods=["POST"])
 def speech_to_text():
     """Convert speech to text for talk mode"""
+    if not AUDIO_ENABLED:
+        return jsonify({
+            "error": "Audio processing not available",
+            "message": "Speech-to-text functionality is disabled on this server"
+        }), 503
+    
     try:
         if 'audio' not in request.files:
             return jsonify({"error": "No audio file provided"}), 400
@@ -324,6 +346,12 @@ def speech_to_text():
 @app.route("/api/text-to-speech", methods=["POST"])
 def text_to_speech():
     """Convert text to speech for talk mode"""
+    if not AUDIO_ENABLED:
+        return jsonify({
+            "error": "Audio processing not available",
+            "message": "Text-to-speech functionality is disabled on this server"
+        }), 503
+    
     try:
         data = request.get_json()
         text = data.get("text")
