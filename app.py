@@ -68,13 +68,13 @@ For example, if asked for a joke, just tell the joke without explanation.
 RESUME_ANALYSIS_PROMPT = """
 You are an expert HR hiring manager. Analyze the following resume.
 Provide a very "short and sweet" analysis. Be direct and use concise language.
-**📄 ATS Score & Feedback:**
+**塘 ATS Score & Feedback:**
 Give a score out of 100 and a brief, one-sentence explanation.
-**👍 Strengths:**
+**総 Strengths:**
 List 2 key strengths in a bulleted list.
-**👎 Weaknesses:**
+**綜 Weaknesses:**
 List 2 major weaknesses in a bulleted list.
-**💡 Recommendations:**
+**庁 Recommendations:**
 Provide 2 actionable recommendations in a bulleted list.
 """
 
@@ -134,7 +134,7 @@ def get_gemini_response(prompt):
 
 @app.route("/api/health", methods=["GET"])
 def health_check():
-    return jsonify({"status": "ok", "version": "1.0.7", "timestamp": datetime.now().isoformat()})
+    return jsonify({"status": "ok", "version": "1.0.8", "timestamp": datetime.now().isoformat()})
 
 @limiter.limit("5 per 15 seconds")
 @app.route("/api/chat", methods=["POST"])
@@ -144,23 +144,43 @@ def chat():
         message = data.get("message", "")
         file_data = data.get("fileData")
         filename = data.get("filename")
+        # --- CORRECTED CODE ---
+        # Get the timezone from the frontend request.
+        # The frontend should determine the user's timezone (e.g., using JavaScript)
+        # and send it in the request body, e.g., {"timezone": "Asia/Kolkata"}
+        timezone = data.get("timezone") 
 
         if not message and not (file_data and filename):
             return jsonify({"error": "No message or file provided."}), 400
 
-        # CORRECTED: Fetches accurate time from a reliable online API
+        # --- CORRECTED CODE: Fetches time based on the user's provided timezone ---
         if "time" in message.lower() or "date" in message.lower():
+            if not timezone:
+                # If the frontend doesn't send a timezone, we can't know the user's local time.
+                return jsonify({"response": "To get your local time, I need your timezone. For example, you can ask me 'what is the time in London?' or 'what is the date in Asia/Kolkata?'"}), 200
+            
             try:
-                response = requests.get("http://worldtimeapi.org/api/ip", timeout=5)
-                response.raise_for_status()
+                # Use the provided timezone for an accurate local time from the API.
+                api_url = f"http://worldtimeapi.org/api/timezone/{timezone}"
+                response = requests.get(api_url, timeout=5)
+                # This will raise an error for bad status codes (like 404 for an invalid timezone)
+                response.raise_for_status() 
+                
                 time_data = response.json()
                 iso_datetime_str = time_data['datetime']
                 now = datetime.fromisoformat(iso_datetime_str)
-                response_text = f"The current date and time is {now.strftime('%A, %B %d, %Y, %I:%M %p')}."
+                # Format the timezone name for better readability in the response.
+                formatted_timezone = timezone.replace('_', ' ').split('/')[-1]
+                response_text = f"The current date and time in {formatted_timezone} is {now.strftime('%A, %B %d, %Y, %I:%M %p')}."
                 return jsonify({"response": response_text})
+
+            except requests.exceptions.HTTPError:
+                # This error handles cases where the timezone name is invalid.
+                 return jsonify({"response": f"Sorry, I couldn't find a timezone named '{timezone}'. Please try another one, like 'America/New_York' or 'Europe/Paris'."}), 400
             except Exception as e:
                 print(f"Error fetching/processing time data: {e}")
-                return jsonify({"response": "Sorry, I couldn't get the current time for you."}), 500
+                return jsonify({"response": "Sorry, I had trouble getting the time for you right now."}), 500
+        # --- END OF CORRECTION ---
 
         # Handle document processing
         if file_data and filename:
@@ -213,7 +233,7 @@ def generate_quiz():
 2. Return only a valid JSON array with no extra text.
 Example: [{{"text": "What is the capital of France?", "options": ["A) London", "B) Paris", "C) Berlin", "D) Madrid"], "correctAnswer": "B) Paris"}}]
 Now generate {question_count} questions about "{topic}":"""
-        gemini_prompt = f"""You are a quiz generator 📝. Generate engaging quiz questions using subject-relevant emojis in the question text. Return only valid JSON arrays in the exact specified format. Do not include any additional text or explanations.
+        gemini_prompt = f"""You are a quiz generator 統. Generate engaging quiz questions using subject-relevant emojis in the question text. Return only valid JSON arrays in the exact specified format. Do not include any additional text or explanations.
 {prompt}"""
         content = get_gemini_response(gemini_prompt)
         if not content or "sorry" in content.lower(): raise Exception("Failed to get valid response from Gemini")
