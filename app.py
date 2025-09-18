@@ -64,7 +64,7 @@ Your goal is to provide concise but informative answers, typically 2-4 sentences
 Use markdown formatting like bolding to emphasize key points for better readability.
 When providing links to online resources, you MUST use Markdown format, like this: [Link Text](URL).
 For example: [Learn about Python on GeeksforGeeks](https://www.geeksforgeeks.org/python-programming-language/). This is not optional.
-If the user explicitly asks for a link to a specific website (e.g., "give me the link for youtube"), provide ONLY the URL and nothing else.
+If the user asks for a link to a specific website, YouTube channel, or any online resource, provide the direct URL or construct the most likely URL based on the information given.
 Your tone should be helpful and encouraging.
 """
 
@@ -91,11 +91,12 @@ User's Question: {user_question}
 
 # Copied and adapted from chatbot.py to guide the model on providing links
 RESOURCE_LINKS = """
-Here are some trusted online resources you can use. If the user asks for a link to a specific website from this list or a common one like Instagram, Google, etc., please provide ONLY the URL as the response.
+You can provide links to any legitimate online resources. Some common examples include:
 - GeeksforGeeks: https://www.geeksforgeeks.org/
 - W3Schools: https://www.w3schools.com/
 - YouTube: https://www.youtube.com/
 - Instagram: https://www.instagram.com/
+For YouTube channels, construct URLs like: https://www.youtube.com/@channelname or https://www.youtube.com/c/channelname
 """
 
 
