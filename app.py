@@ -49,7 +49,7 @@ if not GOOGLE_API_KEY:
 genai.configure(api_key=GOOGLE_API_KEY)
 
 try:
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-2.5-flash')
 except Exception as e:
     print(f"Error initializing Gemini model: {e}")
     exit(1)
@@ -63,19 +63,20 @@ You are a helpful and knowledgeable AI assistant named EduGen.
 Your goal is to provide concise but informative answers, typically 2-4 sentences long.
 Use markdown formatting like bolding to emphasize key points for better readability.
 If the user's question can be better answered with a link to an online resource (like a YouTube video, a Wikipedia article, or a blog post), please provide one.
+If the user explicitly asks for a link to a specific website, provide ONLY the URL and nothing else.
 Your tone should be helpful and encouraging.
 """
 
 RESUME_ANALYSIS_PROMPT = """
 You are an expert HR hiring manager. Analyze the following resume.
 Provide a very "short and sweet" analysis. Be direct and use concise language.
-**塘 ATS Score & Feedback:**
+** ATS Score & Feedback:**
 Give a score out of 100 and a brief, one-sentence explanation.
-**総 Strengths:**
+** Strengths:**
 List 2 key strengths in a bulleted list.
-**綜 Weaknesses:**
+** Weaknesses:**
 List 2 major weaknesses in a bulleted list.
-**庁 Recommendations:**
+** Recommendations:**
 Provide 2 actionable recommendations in a bulleted list.
 """
 
@@ -87,15 +88,22 @@ You are a helpful assistant. Use the provided document context to give a short a
 User's Question: {user_question}
 """
 
+# Copied and adapted from chatbot.py to guide the model on providing links
+RESOURCE_LINKS = """
+Here are some trusted online resources you can use. If the user asks for a link to a specific website from this list or a common one like Instagram, Google, etc., please provide ONLY the URL as the response.
+- GeeksforGeeks: https://www.geeksforgeeks.org/
+- W3Schools: https://www.w3schools.com/
+- YouTube: https://www.youtube.com/
+- Instagram: https://www.instagram.com/
+"""
+
+
 # CORS configuration
 CORS(app, origins=["https://edugen-ai-zeta.vercel.app", "http://localhost:3000", "https://edugen-backend.onrender.com"],
      methods=["GET", "POST", "OPTIONS"], allow_headers=["Content-Type", "Authorization"])
 
 # Rate limiting
 limiter = Limiter(key_func=get_remote_address, app=app, default_limits=["200 per day", "50 per hour"])
-
-# (Audio and Document processing functions remain the same)
-# ...
 
 def extract_text_from_file(file_data, filename):
     if not DOCUMENT_PROCESSING_ENABLED: return None
@@ -145,39 +153,16 @@ def chat():
         message = data.get("message", "")
         file_data = data.get("fileData")
         filename = data.get("filename")
-        timezone = data.get("timezone") 
 
         if not message and not (file_data and filename):
             return jsonify({"error": "No message or file provided."}), 400
-
-        if "time" in message.lower() or "date" in message.lower():
-            if not timezone:
-                return jsonify({"response": "To get your local time, I need your timezone. For example, you can ask me 'what is the time in London?' or 'what is the date in Asia/Kolkata?'"}), 200
-            
-            try:
-                api_url = f"http://worldtimeapi.org/api/timezone/{timezone}"
-                response = requests.get(api_url, timeout=5)
-                response.raise_for_status() 
-                
-                time_data = response.json()
-                iso_datetime_str = time_data['datetime']
-                now = datetime.fromisoformat(iso_datetime_str)
-                formatted_timezone = timezone.replace('_', ' ').split('/')[-1]
-                response_text = f"The current date and time in {formatted_timezone} is {now.strftime('%A, %B %d, %Y, %I:%M %p')}."
-                return jsonify({"response": response_text})
-
-            except requests.exceptions.HTTPError:
-                 return jsonify({"response": f"Sorry, I couldn't find a timezone named '{timezone}'. Please try another one, like 'America/New_York' or 'Europe/Paris'."}), 400
-            except Exception as e:
-                print(f"Error fetching/processing time data: {e}")
-                return jsonify({"response": "Sorry, I had trouble getting the time for you right now."}), 500
 
         # Handle document processing
         if file_data and filename:
             extracted_text = extract_text_from_file(file_data, filename)
             if not extracted_text:
                 return jsonify({"response": "Sorry, I could not read the content of the document."})
-            
+
             classification_prompt = f"Is the following text a resume or CV? Answer with only 'yes' or 'no'.\n\n{extracted_text[:1000]}"
             is_resume_response = get_gemini_response(classification_prompt).strip().lower()
 
@@ -185,26 +170,24 @@ def chat():
                 final_prompt = f"{RESUME_ANALYSIS_PROMPT}\n\n--- RESUME CONTENT ---\n{extracted_text}" if not message else GENERAL_DOC_PROMPT.format(document_text=extracted_text, user_question=message)
             else:
                 final_prompt = GENERAL_DOC_PROMPT.format(document_text=extracted_text, user_question=message)
-            
+
             reply = get_gemini_response(final_prompt)
             return jsonify({"response": reply})
 
         # --- UPDATED LOGIC ---
-        # All general chat messages now use the new, more detailed GENERAL_CHAT_PROMPT.
-        final_prompt = f"{GENERAL_CHAT_PROMPT}\n\nUser's question: {message}"
+        # The prompt now includes the resource links and specific instructions from chatbot.py
+        final_prompt = f"{GENERAL_CHAT_PROMPT}\n\n{RESOURCE_LINKS}\n\nUser's question: {message}"
         reply = get_gemini_response(final_prompt)
-        
+
         return jsonify({"response": reply})
 
     except Exception as e:
         print(f"Chat API Error: {str(e)}")
         return jsonify({"error": "Failed to get response from AI", "message": str(e)}), 500
 
-# The /api/generate-quiz and other endpoints are unchanged as they were working correctly.
 @limiter.limit("2 per 15 seconds")
 @app.route("/api/generate-quiz", methods=["POST"])
 def generate_quiz():
-    # ... (quiz generation code remains the same)
     try:
         data = request.get_json()
         topic = data.get("topic")
@@ -221,7 +204,7 @@ def generate_quiz():
 2. Return only a valid JSON array with no extra text.
 Example: [{{"text": "What is the capital of France?", "options": ["A) London", "B) Paris", "C) Berlin", "D) Madrid"], "correctAnswer": "B) Paris"}}]
 Now generate {question_count} questions about "{topic}":"""
-        gemini_prompt = f"""You are a quiz generator 統. Generate engaging quiz questions using subject-relevant emojis in the question text. Return only valid JSON arrays in the exact specified format. Do not include any additional text or explanations.
+        gemini_prompt = f"""You are a quiz generator. Generate engaging quiz questions using subject-relevant emojis in the question text. Return only valid JSON arrays in the exact specified format. Do not include any additional text or explanations.
 {prompt}"""
         content = get_gemini_response(gemini_prompt)
         if not content or "sorry" in content.lower(): raise Exception("Failed to get valid response from Gemini")
@@ -236,9 +219,6 @@ Now generate {question_count} questions about "{topic}":"""
     except Exception as e:
         print(f"Quiz generation error: {str(e)}")
         return jsonify({"error": "Failed to generate quiz", "message": str(e)}), 500
-
-# (Speech-to-text and Text-to-speech endpoints remain the same)
-# ...
 
 @app.errorhandler(404)
 def not_found(e):
