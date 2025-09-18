@@ -5,6 +5,8 @@ from flask_limiter.util import get_remote_address
 import requests
 import os
 import json
+import io
+import base64
 from datetime import datetime
 import tempfile
 import uuid
@@ -25,6 +27,15 @@ except ImportError:
     AUDIO_ENABLED = False
     print("Audio processing libraries not available. Speech features disabled.")
 
+# Document processing imports
+try:
+    import PyPDF2
+    from docx import Document
+    DOCUMENT_PROCESSING_ENABLED = True
+except ImportError:
+    DOCUMENT_PROCESSING_ENABLED = False
+    print("Document processing libraries not available. PDF/DOCX features disabled.")
+
 # Load environment variables
 from dotenv import load_dotenv
 load_dotenv()
@@ -41,10 +52,40 @@ genai.configure(api_key=GOOGLE_API_KEY)
 
 try:
     # Using Gemini Flash model for fast responses
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
     print(f"Error initializing Gemini model: {e}")
     exit(1)
+
+# Prompts for different modes
+TALK_MODE_PROMPT = "You are a helpful and friendly assistant. Answer the user's question directly and keep your answer very short and concise. Do not use formatting like bolding or lists unless absolutely necessary."
+
+RESUME_ANALYSIS_PROMPT = """
+You are an expert HR hiring manager. Analyze the following resume.
+Provide a very "short and sweet" analysis. Be direct and use concise language.
+
+**📄 ATS Score & Feedback:**
+Give a score out of 100 and a brief, one-sentence explanation.
+
+**👍 Strengths:**
+List 2 key strengths in a bulleted list.
+
+**👎 Weaknesses:**
+List 2 major weaknesses in a bulleted list.
+
+**💡 Recommendations:**
+Provide 2 actionable recommendations in a bulleted list.
+"""
+
+GENERAL_DOC_PROMPT = """
+You are a helpful assistant. Use the provided document context to give a short and sweet answer to the user's question. Be direct and concise.
+
+--- DOCUMENT CONTEXT ---
+{document_text}
+--- END CONTEXT ---
+
+User's Question: {user_question}
+"""
 
 # CORS configuration
 allowed_origins = [
@@ -75,9 +116,30 @@ else:
     tts_engine = None
     speech_recognizer = None
 
+def extract_text_from_file(file_data, filename):
+    """Extracts text from PDF or DOCX file data."""
+    if not DOCUMENT_PROCESSING_ENABLED:
+        return None
+        
+    try:
+        # Assumes file_data is a base64 string
+        decoded_data = base64.b64decode(file_data.split(',')[1])
+        if filename.endswith('.pdf'):
+            pdf_file = io.BytesIO(decoded_data)
+            pdf_reader = PyPDF2.PdfReader(pdf_file)
+            return "".join(page.extract_text() + "\n" for page in pdf_reader.pages)
+        elif filename.endswith('.docx'):
+            docx_file = io.BytesIO(decoded_data)
+            doc = Document(docx_file)
+            return "".join(para.text + "\n" for para in doc.paragraphs)
+        return None
+    except Exception as e:
+        print(f"Error extracting text: {e}")
+        return None
+
 def get_gemini_response(prompt):
     """Fetches response from Gemini API with exponential backoff."""
-    max_retries = 3
+    max_retries = 5
     base_delay = 1
     for attempt in range(max_retries):
         try:
@@ -90,7 +152,7 @@ def get_gemini_response(prompt):
                 time.sleep(delay)
             else:
                 print(f"Gemini API error: {e}")
-                return "Sorry, I'm having trouble processing your request right now. Please try again."
+                return "Sorry, an error occurred while processing your request."
     return "The service is currently busy. Please try again in a moment."
 
 # Rate limit for chat and quiz endpoints
@@ -100,36 +162,81 @@ def health_check():
     """Health check endpoint"""
     return jsonify({
         "status": "ok",
-        "version": "1.0.3",
+        "version": "1.0.4",
         "timestamp": datetime.now().isoformat(),
         "model": "gemini-1.5-flash",
         "talk_mode": "enabled" if AUDIO_ENABLED else "disabled",
-        "audio_features": AUDIO_ENABLED
+        "audio_features": AUDIO_ENABLED,
+        "document_processing": DOCUMENT_PROCESSING_ENABLED
     })
 
 @limiter.limit("2 per 15 seconds")
 @app.route("/api/chat", methods=["POST"])
 def chat():
-    """Chat endpoint"""
+    """Chat endpoint with support for document analysis and casual talk mode"""
     try:
         data = request.get_json()
-        message = data.get("message")
+        message = data.get("message", "")
+        file_data = data.get("fileData")
+        filename = data.get("filename")
+        talk_mode = data.get("talkMode", False)  # New parameter for casual responses
         
-        if not message:
-            return jsonify({"error": "Message is required"}), 400
+        if not message and not (file_data and filename):
+            return jsonify({"error": "No message or file provided."}), 400
 
         print("=== CHAT REQUEST START ===")
         print("Using model: gemini-1.5-flash")
         print("Message received:", message)
+        print("Talk mode:", talk_mode)
+        print("File provided:", bool(file_data and filename))
 
-        # Special handling for time/date requests
-        if "time" in message.lower() or "date" in message.lower():
-            now = datetime.now()
-            response_text = f"The current date and time is {now.strftime('%A, %B %d, %Y, %I:%M %p')}."
-            return jsonify({"response": response_text})
+        # Handle document processing if file is provided
+        if file_data and filename:
+            if not DOCUMENT_PROCESSING_ENABLED:
+                return jsonify({
+                    "error": "Document processing not available",
+                    "message": "PDF/DOCX processing is disabled on this server"
+                }), 503
+                
+            extracted_text = extract_text_from_file(file_data, filename)
+            if not extracted_text:
+                return jsonify({"response": "Sorry, I could not read the content of the document."})
+            
+            # Classify if it's a resume to use the specialized prompt
+            classification_prompt = f"Is the following text a resume or CV? Answer with only 'yes' or 'no'.\n\n{extracted_text[:1000]}"
+            is_resume_response = get_gemini_response(classification_prompt).strip().lower()
 
-        # Create prompt for Gemini
-        prompt = f"""You are EduGen AI 🎓, a comprehensive educational assistant for students. When explaining topics, follow these guidelines:
+            if 'yes' in is_resume_response:
+                # If user asks a question with resume, use general doc prompt, otherwise analyze it
+                if message:
+                    final_prompt = GENERAL_DOC_PROMPT.format(document_text=extracted_text, user_question=message)
+                else:
+                    final_prompt = f"{RESUME_ANALYSIS_PROMPT}\n\n--- RESUME CONTENT ---\n{extracted_text}"
+            else:
+                final_prompt = GENERAL_DOC_PROMPT.format(document_text=extracted_text, user_question=message)
+            
+            reply = get_gemini_response(final_prompt)
+            return jsonify({"response": reply})
+
+        # Handle regular chat (with talk mode or educational mode)
+        if talk_mode:
+            # Casual talk mode - short and sweet responses
+            if "time" in message.lower() or "date" in message.lower():
+                now = datetime.now()
+                response_text = f"The current date and time is {now.strftime('%A, %B %d, %Y, %I:%M %p')}."
+                return jsonify({"response": response_text})
+                
+            final_prompt = f"{TALK_MODE_PROMPT}\n\nUser's question: {message}"
+            reply = get_gemini_response(final_prompt)
+        else:
+            # Educational mode - detailed explanations
+            if "time" in message.lower() or "date" in message.lower():
+                now = datetime.now()
+                response_text = f"The current date and time is {now.strftime('%A, %B %d, %Y, %I:%M %p')}."
+                return jsonify({"response": response_text})
+
+            # Create detailed educational prompt for Gemini
+            prompt = f"""You are EduGen AI 🎓, a comprehensive educational assistant for students. When explaining topics, follow these guidelines:
 
 📚 CONTENT DEPTH: Provide detailed, thorough explanations that cover:
 • Key concepts and definitions
@@ -176,8 +283,7 @@ Always aim for comprehensive yet understandable explanations that help students 
 
 Student's question: {message}"""
 
-        # Get response from Gemini
-        reply = get_gemini_response(prompt)
+            reply = get_gemini_response(prompt)
         
         return jsonify({"response": reply})
         

@@ -1,22 +1,50 @@
 # EduGen AI Python Backend
 
-This Python Flask backend provides API endpoints for the EduGen AI application, including talk mode functionality with speech-to-text and text-to-speech capabilities. **Now powered by Google Gemini API!**
+This Python Flask backend provides API endpoints for the EduGen AI application with enhanced features including document processing and dual chat modes. **Now powered by Google Gemini API!**
 
 ## Features
 
-- **Chat API**: AI-powered educational chat using Google Gemini API
+- **Dual Chat Modes**:
+  - 🗣️ **Talk Mode**: Casual, concise responses for quick conversations
+  - 🎓 **Educational Mode**: Detailed explanations with examples and resources
+- **Document Processing**: Upload and analyze PDF/DOCX files including resume analysis
 - **Quiz Generation**: Dynamic quiz creation based on topics using Gemini
-- **Talk Mode**: Speech-to-text and text-to-speech functionality
+- **Audio Features**: Speech-to-text and text-to-speech (disabled in production deployment)
 - **Rate Limiting**: Prevents API abuse
 - **CORS Support**: Cross-origin request handling
 
+**Note**: Audio processing features are disabled in production deployments due to system dependencies. Core features (chat, quiz, document processing) work perfectly.
+
 ## API Endpoints
 
-### Chat
+### Enhanced Chat
 
-- `POST /api/chat` - Send messages to AI assistant
-- Body: `{"message": "your question"}`
+- `POST /api/chat` - Send messages to AI assistant with multiple modes
+- Body Options:
+
+  ```json
+  {
+    "message": "your question",
+    "talkMode": true // Optional: true for casual, false/omitted for educational
+  }
+  ```
+
+  ```json
+  {
+    "message": "analyze this document", // Optional with file
+    "fileData": "base64_encoded_file_data",
+    "filename": "document.pdf"
+  }
+  ```
+
 - Response: `{"response": "AI response"}`
+
+### Document Processing Features
+
+- **PDF Analysis**: Extract and analyze PDF content
+- **DOCX Analysis**: Process Word documents
+- **Resume Analysis**: Specialized analysis for CV/resume files with ATS scoring
+- **General Document Q&A**: Ask questions about uploaded documents
 
 ### Quiz Generation
 
@@ -66,11 +94,12 @@ All required packages are listed in `requirements.txt`:
 - Flask-Limiter (rate limiting)
 - SpeechRecognition (speech-to-text)
 - pyttsx3 (text-to-speech)
-- pydub (audio processing)
 - requests (HTTP client)
 - python-dotenv (environment variables)
 - gunicorn (WSGI server)
 - **google-generativeai** (Google Gemini API client)
+
+**Note**: Audio-related dependencies (SpeechRecognition, pyttsx3, pydub, PyAudio) are excluded from production deployment to ensure compatibility with cloud hosting platforms.
 
 ## Deployment on Render
 
