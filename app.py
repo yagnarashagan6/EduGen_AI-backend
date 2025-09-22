@@ -11,7 +11,6 @@ from datetime import datetime
 import google.generativeai as genai
 
 # Document processing imports
-# Make sure to install these: pip install PyPDF2 python-docx
 try:
     import PyPDF2
     from docx import Document
@@ -35,7 +34,7 @@ if not GOOGLE_API_KEY:
 genai.configure(api_key=GOOGLE_API_KEY)
 
 try:
-    # Using gemini-1.5-flash as it's fast and capable for these tasks.
+    # Using a fast and capable model for these tasks.
     model = genai.GenerativeModel('gemini-1.5-flash-latest')
 except Exception as e:
     raise RuntimeError(f"Error initializing Gemini model: {e}")
@@ -46,20 +45,30 @@ except Exception as e:
 GENERAL_CHAT_PROMPT = """
 You are EduGen AI, a helpful and knowledgeable assistant.
 Your goal is to provide concise, informative answers (2-4 sentences).
+✅ Always use bullet points for lists.
+✅ Use relevant emojis to make answers engaging.
 Use markdown for emphasis (e.g., **bolding**).
 When providing links, YOU MUST use Markdown format: [Link Text](URL).
 Your tone should be helpful and encouraging.
 """
 
-# This prompt is used specifically for analyzing resumes.
+# --- CORRECTED & IMPROVED PROMPT ---
+# This prompt from your original chatbot.py is more direct and structured.
 RESUME_ANALYSIS_PROMPT = """
-You are an expert ATS (Applicant Tracking System) and professional career coach. A user has uploaded their resume for analysis. Provide a comprehensive and professional review.
+You are an expert HR hiring manager. Analyze the following resume.
+Provide a very "short and sweet" analysis. Be direct and use concise language.
 
-Follow this structure strictly:
-1.  **📊 ATS Compatibility Score:** Give a score out of 100. Justify it briefly based on clarity, keyword optimization, and standard formatting.
-2.  **👍 Strengths:** Identify 2-3 of the strongest aspects of the resume (e.g., quantifiable achievements, strong action verbs, clear structure).
-3.  **💡 Areas for Improvement:** Provide 2-3 specific, actionable suggestions for improvement. Be constructive.
-4.  **💬 Summary:** Briefly summarize the candidate's professional profile based on the resume.
+**📄 ATS Score & Feedback:**
+Give a score out of 100 and a brief, one-sentence explanation.
+
+**👍 Strengths:**
+List 2 key strengths in a bulleted list.
+
+**👎 Weaknesses:**
+List 2 major weaknesses in a bulleted list.
+
+**💡 Recommendations:**
+Provide 2 actionable recommendations in a bulleted list.
 """
 
 # This prompt is used for answering questions about a general document.
@@ -76,11 +85,9 @@ If the answer cannot be found in the text, clearly state that the information is
 """
 
 # --- App Configuration ---
-# CORS configuration to allow requests from your frontend
 CORS(app, origins=["https://edugen-ai-zeta.vercel.app", "http://localhost:3000"],
      methods=["GET", "POST", "OPTIONS"], allow_headers=["Content-Type", "Authorization"])
 
-# Rate limiting to prevent abuse
 limiter = Limiter(key_func=get_remote_address, app=app, default_limits=["200 per day", "50 per hour"])
 
 
@@ -91,7 +98,6 @@ def extract_text_from_file(file_data, filename):
         return None, "Document processing libraries are not installed on the server."
 
     try:
-        # The frontend sends a data URL (e.g., "data:application/pdf;base64,JVBERi..."), we need to strip the header.
         if ',' not in file_data:
             return None, "Invalid base64 file data."
         header, encoded = file_data.split(",", 1)
@@ -119,10 +125,8 @@ def get_gemini_response(prompt):
     for attempt in range(max_retries):
         try:
             response = model.generate_content(prompt)
-            # Accessing the text safely
             return response.text
         except Exception as e:
-            # Check for rate limit error (often indicated by a 429 status code in underlying API calls)
             if "429" in str(e) and attempt < max_retries - 1:
                 import time
                 delay = (base_delay * 2 ** attempt) + random.uniform(0, 1)
@@ -163,7 +167,7 @@ def chat():
         if not message and not (file_data and filename):
             return jsonify({"error": "No message or file was provided."}), 400
 
-        # --- File Processing Logic ---
+        # --- CORRECTED File Processing Logic ---
         if file_data and filename:
             extracted_text, error = extract_text_from_file(file_data, filename)
             if error:
@@ -176,17 +180,14 @@ def chat():
             is_resume_response = get_gemini_response(classification_prompt).strip().lower()
 
             if 'yes' in is_resume_response:
-                # If it's a resume and the user just wants a review, use the analysis prompt
-                if not message or "review" in message.lower() or "analyze" in message.lower():
-                    final_prompt = f"{RESUME_ANALYSIS_PROMPT}\n\n--- RESUME CONTENT ---\n{extracted_text}"
-                # If they ask a specific question, answer it using the resume as context
-                else:
-                    final_prompt = GENERAL_DOC_PROMPT.format(document_text=extracted_text, user_question=message)
+                # If the document is identified as a resume, always use the analysis prompt.
+                # This ensures a structured review is given, which is the primary goal.
+                final_prompt = f"{RESUME_ANALYSIS_PROMPT}\n\n--- RESUME CONTENT ---\n{extracted_text}"
             else:
-                # For any other document, answer the user's question using the text as context
-                if not message:
-                    message = "Summarize this document." # Default action if no question is asked
-                final_prompt = GENERAL_DOC_PROMPT.format(document_text=extracted_text, user_question=message)
+                # For any other document, answer the user's question using the text as context.
+                # If no question is asked, provide a summary as a default action.
+                user_question = message if message else "Summarize this document."
+                final_prompt = GENERAL_DOC_PROMPT.format(document_text=extracted_text, user_question=user_question)
 
             reply = get_gemini_response(final_prompt)
             return jsonify({"response": reply})
@@ -200,7 +201,6 @@ def chat():
         print(f"An unexpected error occurred in /api/chat: {str(e)}")
         return jsonify({"error": "An internal server error occurred.", "message": str(e)}), 500
 
-# The generate_quiz route and error handlers remain unchanged...
 @limiter.limit("5 per minute")
 @app.route("/api/generate-quiz", methods=["POST"])
 def generate_quiz():
@@ -234,7 +234,6 @@ def generate_quiz():
         content = get_gemini_response(gemini_prompt)
         if not content: raise Exception("Failed to get a valid response from the AI model.")
         
-        # Clean the response to ensure it's valid JSON
         content = content.strip()
         
         try:
@@ -259,6 +258,5 @@ def rate_limit_handler(e):
     return jsonify({"error": "Too many requests, please wait and try again."}), 429
 
 if __name__ == "__main__":
-    # It's recommended to use a production-ready WSGI server like Gunicorn instead of app.run in production
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
