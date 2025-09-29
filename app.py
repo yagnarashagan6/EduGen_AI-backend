@@ -35,7 +35,7 @@ genai.configure(api_key=GOOGLE_API_KEY)
 
 try:
     # Using a fast and capable model for these tasks.
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
 except Exception as e:
     raise RuntimeError(f"Error initializing Gemini model: {e}")
 
