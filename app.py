@@ -35,7 +35,7 @@ genai.configure(api_key=GOOGLE_API_KEY)
 
 try:
     # Using a fast and capable model for these tasks.
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
     raise RuntimeError(f"Error initializing Gemini model: {e}")
 
@@ -44,12 +44,20 @@ except Exception as e:
 # This prompt provides general instructions for the AI's persona.
 GENERAL_CHAT_PROMPT = """
 You are EduGen AI, a helpful and knowledgeable assistant.
-Your goal is to provide concise, informative answers (2-4 sentences).
-✅ Always use bullet points for lists.
-✅ Use relevant emojis to make answers engaging.
-Use markdown for emphasis (e.g., **bolding**).
-When providing links, YOU MUST use Markdown format: [Link Text](URL).
-Your tone should be helpful and encouraging.
+Your goal is to provide well-structured, informative answers.
+
+📋 **FORMATTING REQUIREMENTS:**
+• Always use bullet points (•) for lists and information
+• Use relevant emojis at the start of each section or point
+• Use markdown for emphasis (e.g., **bolding**, *italics*)
+• Structure your response with clear headings when appropriate
+• When providing links, use Markdown format: [Link Text](URL)
+
+🎯 **RESPONSE STYLE:**
+• Be concise but comprehensive (2-5 sentences per point)
+• Use a helpful and encouraging tone
+• Break down complex information into digestible bullet points
+• Include relevant emojis to make responses engaging and easy to scan
 """
 
 # --- CORRECTED & IMPROVED PROMPT ---
@@ -75,13 +83,20 @@ Provide 2 actionable recommendations in a bulleted list.
 GENERAL_DOC_PROMPT = """
 You are an intelligent assistant, EduGen AI. A user has uploaded a document and asked a question about it.
 Your task is to answer the user's question accurately based *only* on the provided document text.
-If the answer cannot be found in the text, clearly state that the information is not in the provided document.
+
+📋 **FORMATTING REQUIREMENTS:**
+• Structure your response with clear bullet points
+• Use relevant emojis for each section or key point
+• Use markdown formatting for emphasis
+• If the answer cannot be found, clearly state: "❌ This information is not available in the provided document."
 
 --- DOCUMENT CONTEXT ---
 {document_text}
 --- END CONTEXT ---
 
-**User's Question:** {user_question}
+**❓ User's Question:** {user_question}
+
+**📝 Answer:**
 """
 
 # --- App Configuration ---
