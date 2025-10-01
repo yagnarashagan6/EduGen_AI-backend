@@ -43,11 +43,58 @@ for var in proxy_vars:
         del os.environ[var]
 
 # Initialize Groq client
+def initialize_groq_client():
+    """Initialize Groq client with comprehensive error handling"""
+    try:
+        print("🔧 Starting Groq client initialization...")
+        
+        # Check API key
+        if not GROQ_API_KEY:
+            raise ValueError("GROQ_API_KEY is empty or None")
+        
+        print(f"✅ API key found (length: {len(GROQ_API_KEY)})")
+        
+        # Clear any proxy-related environment variables that might interfere
+        cleared_vars = []
+        for key in list(os.environ.keys()):
+            if 'proxy' in key.lower():
+                cleared_vars.append(key)
+                del os.environ[key]
+        
+        if cleared_vars:
+            print(f"🧹 Cleared proxy env vars: {cleared_vars}")
+        
+        # Import and check Groq version
+        from groq import Groq
+        import groq
+        print(f"📦 Groq library version: {getattr(groq, '__version__', 'unknown')}")
+        
+        # Initialize with minimal parameters only
+        client = Groq(api_key=GROQ_API_KEY)
+        print("✅ Groq client initialized successfully")
+        
+        # Test with a simple call
+        test_response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "user", "content": "test"}],
+            max_tokens=5
+        )
+        print("✅ Groq API test call successful")
+        
+        return client
+        
+    except Exception as e:
+        print(f"❌ Groq initialization failed: {e}")
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error details: {str(e)}")
+        import traceback
+        print(f"Full traceback: {traceback.format_exc()}")
+        raise
+
 try:
-    client = Groq(api_key=GROQ_API_KEY)
-    print("✅ Groq client initialized successfully")
+    client = initialize_groq_client()
 except Exception as e:
-    print(f"❌ Groq initialization failed: {e}")
+    print(f"❌ Failed to initialize Groq client: {e}")
     raise
 
 
