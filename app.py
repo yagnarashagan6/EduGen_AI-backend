@@ -31,14 +31,24 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
     raise ValueError("Error: GROQ_API_KEY environment variable is not set.")
 
+# Aggressive proxy cleanup for Render deployment
+import os
+proxy_vars = [
+    'HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 
+    'ALL_PROXY', 'all_proxy', 'NO_PROXY', 'no_proxy',
+    'REQUESTS_CA_BUNDLE', 'CURL_CA_BUNDLE'
+]
+for var in proxy_vars:
+    if var in os.environ:
+        del os.environ[var]
+
+# Initialize Groq client
 try:
-    # Initialize Groq client with minimal configuration
-    import os
-    os.environ.pop('HTTP_PROXY', None)
-    os.environ.pop('HTTPS_PROXY', None)
     client = Groq(api_key=GROQ_API_KEY)
+    print("✅ Groq client initialized successfully")
 except Exception as e:
-    raise RuntimeError(f"Error initializing Groq client: {e}")
+    print(f"❌ Groq initialization failed: {e}")
+    raise
 
 
 # --- Prompts ---
