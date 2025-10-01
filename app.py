@@ -8,7 +8,7 @@ import io
 import base64
 import random
 from datetime import datetime
-import google.generativeai as genai
+from groq import Groq
 
 # Document processing imports
 try:
@@ -26,18 +26,19 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# --- Google Gemini API Configuration ---
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-if not GOOGLE_API_KEY:
-    raise ValueError("Error: GOOGLE_API_KEY environment variable is not set.")
-
-genai.configure(api_key=GOOGLE_API_KEY)
+# --- Groq API Configuration ---
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    raise ValueError("Error: GROQ_API_KEY environment variable is not set.")
 
 try:
-    # Using a fast and capable model for these tasks.
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    # Initialize Groq client with minimal configuration
+    import os
+    os.environ.pop('HTTP_PROXY', None)
+    os.environ.pop('HTTPS_PROXY', None)
+    client = Groq(api_key=GROQ_API_KEY)
 except Exception as e:
-    raise RuntimeError(f"Error initializing Gemini model: {e}")
+    raise RuntimeError(f"Error initializing Groq client: {e}")
 
 
 # --- Prompts ---
@@ -133,22 +134,31 @@ def extract_text_from_file(file_data, filename):
         print(f"Error extracting text: {e}")
         return None, f"An unexpected error occurred while processing the file."
 
-def get_gemini_response(prompt):
-    """Sends a prompt to the Gemini API with retry logic for rate limiting."""
+def get_groq_response(prompt):
+    """Sends a prompt to the Groq API with retry logic for rate limiting."""
     max_retries = 3
     base_delay = 1
     for attempt in range(max_retries):
         try:
-            response = model.generate_content(prompt)
-            return response.text
+            response = client.chat.completions.create(
+                model="llama-3.1-8b-instant",  # Updated to current model
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=2048
+            )
+            return response.choices[0].message.content
         except Exception as e:
+            print(f"Groq API error (attempt {attempt + 1}): {e}")
+            print(f"Error type: {type(e)}")
             if "429" in str(e) and attempt < max_retries - 1:
                 import time
                 delay = (base_delay * 2 ** attempt) + random.uniform(0, 1)
                 print(f"Rate limit exceeded. Retrying in {delay:.2f}s...")
                 time.sleep(delay)
             else:
-                print(f"Gemini API error: {e}")
+                print(f"Final Groq API error: {e}")
                 return "Sorry, an error occurred while connecting to the AI service."
     return "The service is currently busy. Please try again in a moment."
 
@@ -192,7 +202,7 @@ def chat():
 
             # Use the LLM to classify the document
             classification_prompt = f"Is the following text a resume or CV? Answer with only 'yes' or 'no'.\n\n{extracted_text[:1000]}"
-            is_resume_response = get_gemini_response(classification_prompt).strip().lower()
+            is_resume_response = get_groq_response(classification_prompt).strip().lower()
 
             if 'yes' in is_resume_response:
                 # If the document is identified as a resume, always use the analysis prompt.
@@ -204,12 +214,12 @@ def chat():
                 user_question = message if message else "Summarize this document."
                 final_prompt = GENERAL_DOC_PROMPT.format(document_text=extracted_text, user_question=user_question)
 
-            reply = get_gemini_response(final_prompt)
+            reply = get_groq_response(final_prompt)
             return jsonify({"response": reply})
 
         # --- Standard Chat Logic (No File) ---
         final_prompt = f"{GENERAL_CHAT_PROMPT}\n\nUser's question: {message}"
-        reply = get_gemini_response(final_prompt)
+        reply = get_groq_response(final_prompt)
         return jsonify({"response": reply})
 
     except Exception as e:
@@ -246,7 +256,7 @@ def generate_quiz():
 
         gemini_prompt = f"You are a quiz generator. Generate engaging quiz questions using subject-relevant emojis in the question text. {prompt}"
         
-        content = get_gemini_response(gemini_prompt)
+        content = get_groq_response(gemini_prompt)
         if not content: raise Exception("Failed to get a valid response from the AI model.")
         
         content = content.strip()
